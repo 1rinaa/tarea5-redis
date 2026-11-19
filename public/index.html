@@ -1,0 +1,1466 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bookstore Manager - Redis Event Sourcing</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              400: '#60a5fa',
+              500: '#3b82f6',
+              600: '#2563eb',
+              900: '#1e3a8a'
+            },
+            dark: {
+              bg: '#070b13',
+              card: '#0c1322',
+              cardHover: '#111a2e',
+              border: '#1a2438'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #070b13;
+      color: #f1f5f9;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+    .scrollbar-thin::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .scrollbar-thin::-webkit-scrollbar-thumb {
+      background-color: #1e293b;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col bg-[#070b13] text-slate-100 selection:bg-blue-600 selection:text-white">
+
+    <!-- NAVBAR FLOTANTE Y SOBRIA -->
+  <header class="sticky top-4 z-40 w-[95%] max-w-7xl mx-auto px-2 mt-4">
+    <div class="border border-[#1a2438] bg-[#070b13]/90 backdrop-blur-md rounded-2xl shadow-lg shadow-black/40">
+      <div class="px-4 h-16 flex items-center justify-between">
+        
+        <!-- Logo y Título -->
+        <div class="flex items-center gap-3">
+          <!-- Logo cambiado a tonos oscuros/slate (sin rojo) -->
+          <div class="w-10 h-10 rounded-xl bg-[#0c1322] border border-[#1a2438] flex items-center justify-center shadow-inner">
+            <i data-lucide="database" class="w-5 h-5 text-slate-300"></i>
+          </div>
+          <div>
+            <h1 class="font-bold text-lg leading-tight tracking-tight text-white flex items-center gap-2">
+              Bookstore Manager
+              <span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-semibold uppercase tracking-wider">Redis</span>
+            </h1>
+            <p class="text-xs text-slate-400">Event Sourcing con Redis Cloud</p>
+          </div>
+        </div>
+
+        <!-- Navigation Tabs (Escritorio) -->
+        <nav class="hidden md:flex items-center gap-1 bg-[#0c1322] p-1 rounded-xl border border-[#1a2438]">
+          <button onclick="navTo('books')" id="tab-books" class="tab-btn px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 text-white bg-slate-700/80 shadow-sm border border-slate-600/50">
+            <i data-lucide="book-open" class="w-4 h-4"></i> Libros
+          </button>
+          <button onclick="navTo('authors')" id="tab-authors" class="tab-btn px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 text-slate-400 hover:text-white hover:bg-slate-800/50">
+            <i data-lucide="user" class="w-4 h-4"></i> Autores
+          </button>
+          <button onclick="navTo('publishers')" id="tab-publishers" class="tab-btn px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 text-slate-400 hover:text-white hover:bg-slate-800/50">
+            <i data-lucide="building-2" class="w-4 h-4"></i> Editoriales
+          </button>
+          <button onclick="navTo('queue')" id="tab-queue" class="tab-btn px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 text-slate-400 hover:text-white hover:bg-slate-800/50">
+            <i data-lucide="layers" class="w-4 h-4"></i> Cola Redis
+            <span id="queue-badge" class="px-1.5 py-0.2 rounded-full text-xs font-bold bg-[#1a2438] text-slate-300">0</span>
+          </button>
+        </nav>
+
+        <!-- Status Indicator -->
+        <div id="redis-status-indicator" class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-medium">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span id="redis-status-text">Redis Conectado</span>
+        </div>
+      </div>
+
+      <!-- Mobile Nav -->
+      <div class="md:hidden flex border-t border-[#1a2438] bg-[#0c1322] px-2 py-1 justify-around rounded-b-2xl">
+        <button onclick="navTo('books')" class="mob-tab-btn flex-1 py-2 text-xs font-medium text-center text-white bg-slate-700/50 rounded-md" id="mob-books">Libros</button>
+        <button onclick="navTo('authors')" class="mob-tab-btn flex-1 py-2 text-xs font-medium text-center text-slate-400" id="mob-authors">Autores</button>
+        <button onclick="navTo('publishers')" class="mob-tab-btn flex-1 py-2 text-xs font-medium text-center text-slate-400" id="mob-publishers">Editoriales</button>
+        <button onclick="navTo('queue')" class="mob-tab-btn flex-1 py-2 text-xs font-medium text-center text-slate-400" id="mob-queue">Cola Redis</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="max-w-6xl w-full mx-auto px-4 py-8 flex-1">
+
+    <!-- ========================================== -->
+    <!-- SECCIÓN: LIBROS LISTA                      -->
+    <!-- ========================================== -->
+    <section id="view-books" class="view-panel space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <span class="text-xs font-semibold uppercase tracking-wider text-blue-400">Catálogo de Libros</span>
+          <h2 class="text-2xl font-bold text-white tracking-tight">Gestión de Libros</h2>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="openBookModal()" class="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium text-sm flex items-center gap-2 shadow-lg shadow-blue-600/20 transition">
+            <i data-lucide="plus" class="w-4 h-4"></i> Nuevo Libro
+          </button>
+          <button onclick="processBatchTasks('bookTasks')" class="px-4 py-2.5 rounded-xl bg-[#0c1322] hover:bg-slate-800 border border-[#1a2438] text-blue-400 font-medium text-sm flex items-center gap-2 transition">
+            <i data-lucide="play" class="w-4 h-4"></i> Procesar Tareas (`bookTasks`)
+          </button>
+        </div>
+      </div>
+
+      <!-- Search bar -->
+      <div class="relative">
+        <i data-lucide="search" class="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5"></i>
+        <input type="text" id="search-books" oninput="renderBooks()" placeholder="Buscar libros por título, autor o editorial..."
+          class="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0c1322] border border-[#1a2438] text-white placeholder-slate-500 text-sm focus:outline-none focus:border-blue-500 transition">
+      </div>
+
+      <!-- Books Grid -->
+      <div id="books-grid" class="flex flex-col gap-3"></div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- SECCIÓN: AUTORES LISTA                     -->
+    <!-- ========================================== -->
+    <section id="view-authors" class="view-panel hidden space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <span class="text-xs font-semibold uppercase tracking-wider text-blue-400">Directorio</span>
+          <h2 class="text-2xl font-bold text-white tracking-tight">Gestión de Autores</h2>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="openAuthorModal()" class="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium text-sm flex items-center gap-2 shadow-lg shadow-blue-600/20 transition">
+            <i data-lucide="plus" class="w-4 h-4"></i> Nuevo Autor
+          </button>
+          <button onclick="processBatchTasks('authorTasks')" class="px-4 py-2.5 rounded-xl bg-[#0c1322] hover:bg-slate-800 border border-[#1a2438] text-blue-400 font-medium text-sm flex items-center gap-2 transition">
+            <i data-lucide="play" class="w-4 h-4"></i> Procesar Tareas (`authorTasks`)
+          </button>
+        </div>
+      </div>
+
+      <div class="relative">
+        <i data-lucide="search" class="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5"></i>
+        <input type="text" id="search-authors" oninput="renderAuthors()" placeholder="Buscar autores por nombre, nacionalidad o especialización..."
+          class="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0c1322] border border-[#1a2438] text-white placeholder-slate-500 text-sm focus:outline-none focus:border-blue-500 transition">
+      </div>
+
+      <div id="authors-grid" class="flex flex-col gap-3"></div>
+      
+    </section>
+
+    <!-- ========================================== -->
+    <!-- SECCIÓN: EDITORIALES LISTA                 -->
+    <!-- ========================================== -->
+    <section id="view-publishers" class="view-panel hidden space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <span class="text-xs font-semibold uppercase tracking-wider text-blue-400">Empresas Editoriales</span>
+          <h2 class="text-2xl font-bold text-white tracking-tight">Gestión de Editoriales</h2>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="openPublisherModal()" class="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium text-sm flex items-center gap-2 shadow-lg shadow-blue-600/20 transition">
+            <i data-lucide="plus" class="w-4 h-4"></i> Nueva Editorial
+          </button>
+          <button onclick="processBatchTasks('publisherTasks')" class="px-4 py-2.5 rounded-xl bg-[#0c1322] hover:bg-slate-800 border border-[#1a2438] text-blue-400 font-medium text-sm flex items-center gap-2 transition">
+            <i data-lucide="play" class="w-4 h-4"></i> Procesar Tareas (`publisherTasks`)
+          </button>
+        </div>
+      </div>
+
+      <div class="relative">
+        <i data-lucide="search" class="w-4 h-4 text-slate-500 absolute left-3.5 top-3.5"></i>
+        <input type="text" id="search-publishers" oninput="renderPublishers()" placeholder="Buscar editoriales por nombre, país o género..."
+          class="w-full pl-10 pr-4 py-2.5 rounded-xl bg-[#0c1322] border border-[#1a2438] text-white placeholder-slate-500 text-sm focus:outline-none focus:border-blue-500 transition">
+      </div>
+
+      <div id="publishers-grid" class="flex flex-col gap-3"></div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- DETALLE DEL LIBRO (REPLICA EXACTA IMAGEN)  -->
+    <!-- ========================================== -->
+    <section id="view-book-detail" class="view-panel hidden space-y-8">
+      <!-- Back button -->
+      <div>
+        <button onclick="navTo('books')" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#0c1322] hover:bg-slate-800 border border-[#1a2438] text-slate-300 text-xs font-semibold transition">
+          <i data-lucide="arrow-left" class="w-4 h-4"></i> Volver a libros
+        </button>
+      </div>
+
+      <!-- Title Header -->
+      <div class="space-y-1">
+        <span class="text-xs font-bold tracking-widest uppercase text-blue-500">DETALLE DEL LIBRO</span>
+        <h2 id="detail-book-title" class="text-3xl md:text-4xl font-extrabold text-white tracking-tight"></h2>
+      </div>
+
+      <!-- Información Section -->
+      <div class="space-y-4">
+        <div class="flex items-center gap-2 text-blue-400 text-xs font-bold tracking-wider uppercase">
+          <i data-lucide="info" class="w-4 h-4"></i>
+          <span>INFORMACIÓN</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <!-- Card Copyright -->
+          <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+              <i data-lucide="calendar" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <span class="text-slate-400 text-xs font-semibold uppercase tracking-wider block">COPYRIGHT</span>
+              <span id="detail-book-copyright" class="text-white text-xl font-bold block"></span>
+            </div>
+          </div>
+          
+          <!-- Card Edición -->
+          <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <i data-lucide="layers" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <span class="text-slate-400 text-xs font-semibold uppercase tracking-wider block">EDICIÓN</span>
+              <span id="detail-book-edition" class="text-white text-xl font-bold block"></span>
+            </div>
+          </div>
+          
+          <!-- Card Idioma -->
+          <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400 flex items-center justify-center shrink-0">
+              <i data-lucide="globe" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <span class="text-slate-400 text-xs font-semibold uppercase tracking-wider block">IDIOMA</span>
+              <span id="detail-book-language" class="text-white text-xl font-bold uppercase block"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Enlaces Relacionados Section -->
+      <div class="space-y-4">
+        <div class="flex items-center gap-2 text-blue-400 text-xs font-bold tracking-wider uppercase">
+          <i data-lucide="link" class="w-4 h-4"></i>
+          <span>ENLACES RELACIONADOS</span>
+        </div>
+
+        <div class="space-y-3">
+          <!-- Card Autor -->
+          <div id="detail-book-author-card" class="group bg-[#0c1322] hover:bg-[#111a2e] border border-[#1a2438] hover:border-blue-500/40 rounded-xl p-5 flex items-center justify-between cursor-pointer transition">
+            <div class="flex items-center gap-4">
+              <div class="w-14 h-14 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center">
+                <i data-lucide="user" class="w-7 h-7"></i>
+              </div>
+              <div>
+                <span class="text-xs font-bold tracking-wider uppercase text-slate-500 block mb-1">AUTOR</span>
+                <span id="detail-book-author-name" class="text-white font-bold text-lg group-hover:text-blue-400 transition"></span>
+              </div>
+            </div>
+            <i data-lucide="arrow-right" class="w-6 h-6 text-slate-500 group-hover:text-blue-400 group-hover:translate-x-1 transition"></i>
+          </div>
+
+          <!-- Card Editorial -->
+          <div id="detail-book-publisher-card" class="group bg-[#0c1322] hover:bg-[#111a2e] border border-[#1a2438] hover:border-blue-500/40 rounded-xl p-5 flex items-center justify-between cursor-pointer transition">
+            <div class="flex items-center gap-4">
+              <div class="w-14 h-14 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center">
+                <i data-lucide="building-2" class="w-7 h-7"></i>
+              </div>
+              <div>
+                <span class="text-xs font-bold tracking-wider uppercase text-slate-500 block mb-1">EDITORIAL</span>
+                <span id="detail-book-publisher-name" class="text-white font-bold text-lg group-hover:text-amber-400 transition"></span>
+              </div>
+            </div>
+            <i data-lucide="arrow-right" class="w-6 h-6 text-slate-500 group-hover:text-amber-400 group-hover:translate-x-1 transition"></i>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="flex items-center gap-3 pt-6 border-t border-[#1a2438]">
+        <button id="btn-edit-current-book" class="px-5 py-2.5 rounded-xl bg-[#0c1322] hover:bg-slate-800 border border-[#1a2438] text-white text-sm font-medium flex items-center gap-2 transition">
+          <i data-lucide="edit-3" class="w-4 h-4 text-amber-400"></i> Editar Libro
+        </button>
+        <button id="btn-delete-current-book" class="px-5 py-2.5 rounded-xl bg-red-950/30 hover:bg-red-900/50 border border-red-900/40 text-red-400 text-sm font-medium flex items-center gap-2 transition">
+          <i data-lucide="trash-2" class="w-4 h-4"></i> Eliminar Libro
+        </button>
+      </div>
+    </section>
+
+    <!-- ========================================== -->
+    <!-- DETALLE DEL AUTOR (REPLICA EXACTA IMAGEN)  -->
+    <!-- ========================================== -->
+    <section id="view-author-detail" class="view-panel hidden space-y-8">
+      <!-- Back button -->
+      <div>
+        <button onclick="navTo('authors')" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#0c1322] hover:bg-slate-800 border border-[#1a2438] text-slate-300 text-xs font-semibold transition">
+          <i data-lucide="arrow-left" class="w-4 h-4"></i> Volver a autores
+        </button>
+      </div>
+
+      <!-- Title Header -->
+      <div class="space-y-1">
+        <span class="text-xs font-bold tracking-widest uppercase text-blue-500">DETALLE DEL AUTOR</span>
+        <h2 id="detail-author-name" class="text-3xl md:text-4xl font-extrabold text-white tracking-tight"></h2>
+      </div>
+
+      <!-- Información Section -->
+      <div class="space-y-4">
+        <div class="flex items-center gap-2 text-blue-400 text-xs font-bold tracking-wider uppercase">
+          <i data-lucide="info" class="w-4 h-4"></i>
+          <span>INFORMACIÓN</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+              <i data-lucide="map-pin" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <span class="text-slate-400 text-xs font-semibold uppercase tracking-wider block">Nacionalidad</span>
+              <span id="detail-author-nationality" class="text-white text-xl font-bold block"></span>
+            </div>
+          </div>
+          <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <i data-lucide="calendar" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <span class="text-slate-400 text-xs font-semibold uppercase tracking-wider block">Nacimiento</span>
+              <span id="detail-author-birthyear" class="text-white text-xl font-bold block"></span>
+            </div>
+          </div>
+          <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400 flex items-center justify-center shrink-0">
+              <i data-lucide="award" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <span class="text-slate-400 text-xs font-semibold uppercase tracking-wider block">Especialidad</span>
+              <span id="detail-author-specialization" class="text-white text-lg font-bold block"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Libros Publicados Section (Autor) -->
+      <div class="space-y-4">
+        <div class="flex items-center gap-2 text-blue-400 text-xs font-bold tracking-wider uppercase">
+          <i data-lucide="book-open" class="w-4 h-4"></i>
+          <span>LIBROS PUBLICADOS</span>
+        </div>
+        <div id="detail-author-books-list" class="space-y-3"></div>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="flex items-center gap-3 pt-6 border-t border-[#1a2438]">
+        <button id="btn-edit-current-author" class="px-5 py-2.5 rounded-xl bg-[#0c1322] hover:bg-slate-800 border border-[#1a2438] text-white text-sm font-medium flex items-center gap-2 transition">
+          <i data-lucide="edit-3" class="w-4 h-4 text-amber-400"></i> Editar Autor
+        </button>
+        <button id="btn-delete-current-author" class="px-5 py-2.5 rounded-xl bg-red-950/30 hover:bg-red-900/50 border border-red-900/40 text-red-400 text-sm font-medium flex items-center gap-2 transition">
+          <i data-lucide="trash-2" class="w-4 h-4"></i> Eliminar Autor
+        </button>
+      </div>
+    </section>
+    </section>
+
+    <!-- ============================================== -->
+    <!-- DETALLE DE LA EDITORIAL (REPLICA EXACTA IMAGEN)-->
+    <!-- ============================================== -->
+    <section id="view-publisher-detail" class="view-panel hidden space-y-8">
+      <!-- Back button -->
+      <div>
+        <button onclick="navTo('publishers')" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#0c1322] hover:bg-slate-800 border border-[#1a2438] text-slate-300 text-xs font-semibold transition">
+          <i data-lucide="arrow-left" class="w-4 h-4"></i> Volver a editoriales
+        </button>
+      </div>
+
+      <!-- Title Header -->
+      <div class="space-y-1">
+        <span class="text-xs font-bold tracking-widest uppercase text-blue-500">DETALLE DE LA EDITORIAL</span>
+        <div class="flex items-center gap-3">
+          <h2 id="detail-publisher-name" class="text-3xl md:text-4xl font-extrabold text-white tracking-tight"></h2>
+          <span id="detail-publisher-id-badge" class="px-2.5 py-1 rounded-lg bg-blue-950/70 border border-blue-800/60 text-blue-400 text-xs font-bold"></span>
+        </div>
+      </div>
+
+            <!-- Información Section -->
+      <div class="space-y-4">
+        <div class="flex items-center gap-2 text-blue-400 text-xs font-bold tracking-wider uppercase">
+          <i data-lucide="info" class="w-4 h-4"></i>
+          <span>INFORMACIÓN</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+              <i data-lucide="map-pin" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <span class="text-slate-400 text-xs font-semibold uppercase tracking-wider block">País</span>
+              <span id="detail-publisher-country" class="text-white text-xl font-bold block"></span>
+            </div>
+          </div>
+          <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
+              <i data-lucide="calendar" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <span class="text-slate-400 text-xs font-semibold uppercase tracking-wider block">Fundación</span>
+              <span id="detail-publisher-year" class="text-white text-xl font-bold block"></span>
+            </div>
+          </div>
+          <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-5 flex items-center gap-4">
+            <div class="w-12 h-12 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400 flex items-center justify-center shrink-0">
+              <i data-lucide="tag" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <span class="text-slate-400 text-xs font-semibold uppercase tracking-wider block">Género</span>
+              <span id="detail-publisher-genre" class="text-white text-xl font-bold block"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Libros Publicados Section (Editorial) -->
+      <div class="space-y-4">
+        <div class="flex items-center gap-2 text-blue-400 text-xs font-bold tracking-wider uppercase">
+          <i data-lucide="book-open" class="w-4 h-4"></i>
+          <span>LIBROS PUBLICADOS</span>
+        </div>
+        <div id="detail-publisher-books-list" class="space-y-3"></div>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="flex items-center gap-3 pt-6 border-t border-[#1a2438]">
+        <button id="btn-edit-current-publisher" class="px-5 py-2.5 rounded-xl bg-[#0c1322] hover:bg-slate-800 border border-[#1a2438] text-white text-sm font-medium flex items-center gap-2 transition">
+          <i data-lucide="edit-3" class="w-4 h-4 text-amber-400"></i> Editar Editorial
+        </button>
+        <button id="btn-delete-current-publisher" class="px-5 py-2.5 rounded-xl bg-red-950/30 hover:bg-red-900/50 border border-red-900/40 text-red-400 text-sm font-medium flex items-center gap-2 transition">
+          <i data-lucide="trash-2" class="w-4 h-4"></i> Eliminar Editorial
+        </button>
+      </div>
+    </section>
+    </section>
+
+    <!-- ============================================== -->
+    <!-- SECCIÓN: COLA REDIS EVENT SOURCING             -->
+    <!-- ============================================== -->
+    <section id="view-queue" class="view-panel hidden space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <span class="text-xs font-semibold uppercase tracking-wider text-blue-400">Redis Insight / Event Sourcing</span>
+          <h2 class="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+            Cola de Eventos <code class="text-sm px-2.5 py-1 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/30 font-mono">bookstore</code>
+          </h2>
+          <p class="text-xs text-slate-400 mt-1">
+            Cada inserción, edición y eliminación se encola en Redis con <code class="text-blue-400">RPUSH bookstore</code> y se visualiza con <code class="text-blue-400">LRANGE bookstore 0 -1</code>.
+          </p>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="fetchQueue()" class="px-4 py-2.5 rounded-xl bg-[#0c1322] hover:bg-slate-800 border border-[#1a2438] text-white font-medium text-sm flex items-center gap-2 transition">
+            <i data-lucide="refresh-cw" class="w-4 h-4 text-blue-400"></i> Refrescar Cola
+          </button>
+          <button onclick="clearRedisQueue()" class="px-4 py-2.5 rounded-xl bg-red-950/30 hover:bg-red-900/50 border border-red-900/40 text-red-400 font-medium text-sm flex items-center gap-2 transition">
+            <i data-lucide="trash-2" class="w-4 h-4"></i> Vaciar Cola (`DEL`)
+          </button>
+        </div>
+      </div>
+
+      <!-- Batch Execution Trigger Card -->
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-4 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Libros Batch</span>
+              <i data-lucide="book" class="w-4 h-4 text-blue-400"></i>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">Lee la cola e invoca <code class="text-blue-400">batchInsert/Update/DeleteBook</code>.</p>
+          </div>
+          <button onclick="processBatchTasks('bookTasks')" class="mt-4 w-full py-2 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 text-blue-400 text-xs font-semibold transition">
+            Ejecutar `bookTasks`
+          </button>
+        </div>
+
+        <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-4 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Autores Batch</span>
+              <i data-lucide="user" class="w-4 h-4 text-emerald-400"></i>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">Lee la cola e invoca <code class="text-emerald-400">batchInsert/Update/DeleteAuthor</code>.</p>
+          </div>
+          <button onclick="processBatchTasks('authorTasks')" class="mt-4 w-full py-2 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/30 text-emerald-400 text-xs font-semibold transition">
+            Ejecutar `authorTasks`
+          </button>
+        </div>
+
+        <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-4 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Editoriales Batch</span>
+              <i data-lucide="building-2" class="w-4 h-4 text-purple-400"></i>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">Lee la cola e invoca <code class="text-purple-400">batchInsert/Update/DeletePublisher</code>.</p>
+          </div>
+          <button onclick="processBatchTasks('publisherTasks')" class="mt-4 w-full py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/30 text-purple-400 text-xs font-semibold transition">
+            Ejecutar `publisherTasks`
+          </button>
+        </div>
+      </div>
+
+      <!-- Queue Table / Cards -->
+      <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+            <i data-lucide="list-ordered" class="w-4 h-4 text-blue-400"></i>
+            Eventos registrados en Redis (<span id="queue-count-display">0</span>)
+          </span>
+          <span id="queue-connection-details" class="text-xs text-slate-500 font-mono"></span>
+        </div>
+
+        <div id="queue-items-container" class="space-y-3"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ============================================== -->
+  <!-- MODAL: FORMULARIO LIBRO                        -->
+  <!-- ============================================== -->
+  <div id="modal-book" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-[#1a2438] pb-3">
+        <h3 id="modal-book-title" class="text-lg font-bold text-white">Nuevo Libro</h3>
+        <button onclick="closeModals()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <form id="form-book" onsubmit="handleBookSubmit(event)" class="space-y-4">
+        <input type="hidden" id="form-book-id">
+        <div>
+          <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Título del Libro *</label>
+          <input type="text" id="form-book-title" required placeholder="Ej: Operating System Concepts"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500">
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Copyright</label>
+            <input type="text" id="form-book-copyright" placeholder="Ej: 2012"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Edición</label>
+            <input type="text" id="form-book-edition" placeholder="Ej: 9th"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Idioma</label>
+            <input type="text" id="form-book-language" placeholder="Ej: ENGLISH"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Autor *</label>
+            <select id="form-book-author" required
+              class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500"></select>
+          </div>
+          <div>
+            <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Editorial *</label>
+            <select id="form-book-publisher" required
+              class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500"></select>
+          </div>
+        </div>
+        <div class="flex items-center justify-end gap-3 pt-3 border-t border-[#1a2438]">
+          <button type="button" onclick="closeModals()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-sm font-medium hover:bg-slate-700 transition">Cancelar</button>
+          <button type="submit" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition">Guardar Libro</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- MODAL: FORMULARIO AUTOR                        -->
+  <!-- ============================================== -->
+  <div id="modal-author" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-[#1a2438] pb-3">
+        <h3 id="modal-author-title" class="text-lg font-bold text-white">Nuevo Autor</h3>
+        <button onclick="closeModals()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <form id="form-author" onsubmit="handleAuthorSubmit(event)" class="space-y-4">
+        <input type="hidden" id="form-author-id">
+        <div>
+          <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Nombre Completo *</label>
+          <input type="text" id="form-author-name" required placeholder="Ej: Abraham Silberschatz"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Nacionalidad *</label>
+            <input type="text" id="form-author-nationality" required placeholder="Ej: Israelis / American"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Año de Nacimiento</label>
+            <input type="text" id="form-author-birthyear" placeholder="Ej: 1952"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500">
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Áreas de Especialización</label>
+          <input type="text" id="form-author-specialization" placeholder="Ej: Database Systems, Operating Systems"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500">
+        </div>
+        <div class="flex items-center justify-end gap-3 pt-3 border-t border-[#1a2438]">
+          <button type="button" onclick="closeModals()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-sm font-medium hover:bg-slate-700 transition">Cancelar</button>
+          <button type="submit" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition">Guardar Autor</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- MODAL: FORMULARIO EDITORIAL                    -->
+  <!-- ============================================== -->
+  <div id="modal-publisher" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-[#1a2438] pb-3">
+        <h3 id="modal-publisher-title" class="text-lg font-bold text-white">Nueva Editorial</h3>
+        <button onclick="closeModals()" class="text-slate-400 hover:text-white"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <form id="form-publisher" onsubmit="handlePublisherSubmit(event)" class="space-y-4">
+        <input type="hidden" id="form-publisher-id">
+        <div>
+          <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Nombre de la Editorial *</label>
+          <input type="text" id="form-publisher-name" required placeholder="Ej: John Wiley & Sons"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500">
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">País *</label>
+            <input type="text" id="form-publisher-country" required placeholder="Ej: United States"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Año de Fundación</label>
+            <input type="text" id="form-publisher-year" placeholder="Ej: 1807"
+              class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500">
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold uppercase text-slate-400 mb-1">Género / Enfoque</label>
+          <input type="text" id="form-publisher-genre" placeholder="Ej: Academic"
+            class="w-full px-3.5 py-2.5 rounded-xl bg-[#070b13] border border-[#1a2438] text-white text-sm focus:outline-none focus:border-blue-500">
+        </div>
+        <div class="flex items-center justify-end gap-3 pt-3 border-t border-[#1a2438]">
+          <button type="button" onclick="closeModals()" class="px-4 py-2 rounded-xl bg-slate-800 text-slate-300 text-sm font-medium hover:bg-slate-700 transition">Cancelar</button>
+          <button type="submit" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition">Guardar Editorial</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- TOAST NOTIFICATIONS                            -->
+  <!-- ============================================== -->
+  <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none"></div>
+
+  <!-- SCRIPT LÓGICA DE APLICACIÓN -->
+  <script>
+    // ESTADO GLOBAL
+    let state = {
+      books: [],
+      authors: [],
+      publishers: [],
+      queue: []
+    };
+
+    // Navegación
+    function navTo(viewId) {
+      document.querySelectorAll('.view-panel').forEach(p => p.classList.add('hidden'));
+      const target = document.getElementById(`view-${viewId}`);
+      if (target) target.classList.remove('hidden');
+
+      // Update Nav buttons
+      document.querySelectorAll('.tab-btn').forEach(b => {
+        b.className = 'tab-btn px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 text-slate-400 hover:text-white hover:bg-slate-800/50';
+      });
+      const activeBtn = document.getElementById(`tab-${viewId}`);
+      if (activeBtn) {
+        activeBtn.className = 'tab-btn px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-2 text-white bg-blue-600 shadow';
+      }
+
+      // Update mobile tabs
+      document.querySelectorAll('.mob-tab-btn').forEach(b => b.className = 'mob-tab-btn flex-1 py-2 text-xs font-medium text-center text-slate-400');
+      const activeMobBtn = document.getElementById(`mob-${viewId}`);
+      if (activeMobBtn) activeMobBtn.className = 'mob-tab-btn flex-1 py-2 text-xs font-medium text-center text-blue-400 font-bold';
+
+      if (viewId === 'queue') {
+        fetchQueue();
+      }
+      lucide.createIcons();
+    }
+
+    // TOAST NOTIFICATIONS
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      const bg = type === 'success' ? 'bg-[#0c1322] border-blue-500/50 text-white' : 'bg-red-950/90 border-red-500/50 text-white';
+      const icon = type === 'success' ? 'check-circle' : 'alert-circle';
+      const iconColor = type === 'success' ? 'text-blue-400' : 'text-red-400';
+
+      toast.className = `${bg} border shadow-xl rounded-xl p-4 flex items-start gap-3 pointer-events-auto transition transform duration-300 translate-y-2 opacity-0`;
+      toast.innerHTML = `
+        <i data-lucide="${icon}" class="w-5 h-5 ${iconColor} shrink-0 mt-0.5"></i>
+        <div class="text-xs font-medium flex-1">${message}</div>
+      `;
+      container.appendChild(toast);
+      lucide.createIcons();
+
+      setTimeout(() => {
+        toast.classList.remove('translate-y-2', 'opacity-0');
+      }, 10);
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      }, 4000);
+    }
+
+    // CARGA INICIAL DE ENTIDADES
+    async function loadInitialData() {
+      try {
+        const res = await fetch('/.netlify/functions/getEntities');
+        if (res.ok) {
+          const data = await res.json();
+          state.books = data.books || [];
+          state.authors = data.authors || [];
+          state.publishers = data.publishers || [];
+        }
+      } catch (err) {
+        console.warn('Error al conectar con backend, usando memoria:', err);
+      }
+      renderAll();
+      fetchQueue();
+    }
+
+    // GUARDADO PERSISTENTE EN REDIS
+    async function persistEntities() {
+      try {
+        await fetch('/.netlify/functions/saveEntities', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            books: state.books,
+            authors: state.authors,
+            publishers: state.publishers
+          })
+        });
+      } catch (e) {
+        console.warn('No se pudo persistir en Redis:', e);
+      }
+    }
+
+    // RENDERIZADO GENERAL
+    function renderAll() {
+      renderBooks();
+      renderAuthors();
+      renderPublishers();
+      populateDropdowns();
+      lucide.createIcons();
+    }
+
+    // DROPDOWNS PARA FORMULARIOS
+    function populateDropdowns() {
+      const authorSelect = document.getElementById('form-book-author');
+      const pubSelect = document.getElementById('form-book-publisher');
+
+      authorSelect.innerHTML = '<option value="">-- Seleccionar Autor --</option>' +
+        state.authors.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+
+      pubSelect.innerHTML = '<option value="">-- Seleccionar Editorial --</option>' +
+        state.publishers.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+    }
+
+    // ==============================================
+    // RENDERIZADO DE LIBROS
+    // ==============================================
+    function renderBooks() {
+      const q = (document.getElementById('search-books')?.value || '').toLowerCase();
+      const filtered = state.books.filter(b => {
+        const author = state.authors.find(a => a.id === b.authorId)?.name || '';
+        const pub = state.publishers.find(p => p.id === b.publisherId)?.name || '';
+        return b.title.toLowerCase().includes(q) || author.toLowerCase().includes(q) || pub.toLowerCase().includes(q);
+      });
+
+      const container = document.getElementById('books-grid');
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="col-span-full py-12 text-center text-slate-500">
+            <i data-lucide="book-x" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+            <p>No se encontraron libros registrados.</p>
+          </div>
+        `;
+        lucide.createIcons();
+        return;
+      }
+
+        container.innerHTML = filtered.map(b => {
+        const author = state.authors.find(a => a.id === b.authorId);
+        const pub = state.publishers.find(p => p.id === b.publisherId);
+        return `
+          <div class="group bg-[#0c1322] hover:bg-[#111a2e] border border-[#1a2438] hover:border-blue-500/40 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 transition shadow-sm">
+            
+            <!-- Información Principal -->
+            <div class="flex-1">
+              <h3 class="text-xl font-bold text-white group-hover:text-blue-400 transition cursor-pointer mb-2" onclick="viewBookDetail('${b.id}')">${b.title}</h3>
+              
+              <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400">
+                <span class="flex items-center gap-1.5">
+                  <i data-lucide="user" class="w-4 h-4 text-blue-400/70"></i> 
+                  <strong class="text-slate-200 font-medium">${author ? author.name : 'Desconocido'}</strong>
+                </span>
+                <span class="flex items-center gap-1.5">
+                  <i data-lucide="building-2" class="w-4 h-4 text-blue-400/70"></i> 
+                  <strong class="text-slate-200 font-medium">${pub ? pub.name : 'Desconocido'}</strong>
+                </span>
+                <span class="px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-xs font-mono">
+                  ${b.edition || 'N/A'} • ${b.copyright || 'N/A'}
+                </span>
+              </div>
+            </div>
+
+            <!-- Acciones -->
+            <div class="flex items-center gap-3 md:w-auto w-full border-t md:border-t-0 border-[#1a2438] pt-4 md:pt-0 mt-2 md:mt-0 justify-end">
+              <button onclick="viewBookDetail('${b.id}')" class="text-sm font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-1 mr-2 transition">
+                Ver Detalle <i data-lucide="chevron-right" class="w-4 h-4"></i>
+              </button>
+              <div class="w-px h-6 bg-[#1a2438] mx-1 hidden md:block"></div>
+              <button onclick="editBook('${b.id}')" title="Editar" class="p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 transition"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+              <button onclick="deleteBook('${b.id}')" title="Eliminar" class="p-2.5 rounded-xl bg-red-950/40 hover:bg-red-900/60 text-red-400 transition"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+            </div>
+
+          </div>
+        `;
+      }).join('');
+      lucide.createIcons();
+    }
+
+    // ==============================================
+    // RENDERIZADO DE AUTORES
+    // ==============================================
+    function renderAuthors() {
+      const q = (document.getElementById('search-authors')?.value || '').toLowerCase();
+      const filtered = state.authors.filter(a => {
+        return a.name.toLowerCase().includes(q) || (a.nationality && a.nationality.toLowerCase().includes(q)) || (a.specialization && a.specialization.toLowerCase().includes(q));
+      });
+
+      const container = document.getElementById('authors-grid');
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="col-span-full py-12 text-center text-slate-500">
+            <i data-lucide="user-x" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+            <p>No se encontraron autores registrados.</p>
+          </div>
+        `;
+        lucide.createIcons();
+        return;
+      }
+
+       container.innerHTML = filtered.map(a => {
+        const bookCount = state.books.filter(b => b.authorId === a.id).length;
+        return `
+          <div class="group bg-[#0c1322] hover:bg-[#111a2e] border border-[#1a2438] hover:border-blue-500/40 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 transition shadow-sm">
+            
+            <!-- Información Principal -->
+            <div class="flex-1">
+              <h3 class="text-xl font-bold text-white group-hover:text-blue-400 transition cursor-pointer mb-2" onclick="viewAuthorDetail('${a.id}')">${a.name}</h3>
+              
+              <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400">
+                <span class="flex items-center gap-1.5">
+                  <i data-lucide="globe" class="w-4 h-4 text-blue-400/70"></i> 
+                  <strong class="text-slate-200 font-medium">${a.nationality || 'Nacionalidad N/A'}</strong>
+                </span>
+                <span class="flex items-center gap-1.5">
+                  <i data-lucide="award" class="w-4 h-4 text-blue-400/70"></i> 
+                  <strong class="text-slate-200 font-medium">${a.specialization || 'General'}</strong>
+                </span>
+                <span class="px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-xs font-mono">
+                  ${bookCount} libro(s)
+                </span>
+              </div>
+            </div>
+
+            <!-- Acciones -->
+            <div class="flex items-center gap-3 md:w-auto w-full border-t md:border-t-0 border-[#1a2438] pt-4 md:pt-0 mt-2 md:mt-0 justify-end">
+              <button onclick="viewAuthorDetail('${a.id}')" class="text-sm font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-1 mr-2 transition">
+                Ver Detalle <i data-lucide="chevron-right" class="w-4 h-4"></i>
+              </button>
+              <div class="w-px h-6 bg-[#1a2438] mx-1 hidden md:block"></div>
+              <button onclick="editAuthor('${a.id}')" title="Editar" class="p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 transition"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+              <button onclick="deleteAuthor('${a.id}')" title="Eliminar" class="p-2.5 rounded-xl bg-red-950/40 hover:bg-red-900/60 text-red-400 transition"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+            </div>
+
+          </div>
+        `;
+      }).join('');
+      lucide.createIcons();
+    }
+
+    // ==============================================
+    // RENDERIZADO DE EDITORIALES
+    // ==============================================
+    function renderPublishers() {
+      const q = (document.getElementById('search-publishers')?.value || '').toLowerCase();
+      const filtered = state.publishers.filter(p => {
+        return p.name.toLowerCase().includes(q) || (p.country && p.country.toLowerCase().includes(q)) || (p.genre && p.genre.toLowerCase().includes(q));
+      });
+
+      const container = document.getElementById('publishers-grid');
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="col-span-full py-12 text-center text-slate-500">
+            <i data-lucide="building-x" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+            <p>No se encontraron editoriales registradas.</p>
+          </div>
+        `;
+        lucide.createIcons();
+        return;
+      }
+
+            container.innerHTML = filtered.map(p => {
+        const bookCount = state.books.filter(b => b.publisherId === p.id).length;
+        return `
+          <div class="group bg-[#0c1322] hover:bg-[#111a2e] border border-[#1a2438] hover:border-blue-500/40 rounded-2xl p-6 flex flex-col md:flex-row md:items-center justify-between gap-6 transition shadow-sm">
+            
+            <!-- Información Principal -->
+            <div class="flex-1">
+              <h3 class="text-xl font-bold text-white group-hover:text-blue-400 transition cursor-pointer mb-2" onclick="viewPublisherDetail('${p.id}')">${p.name}</h3>
+              
+              <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-slate-400">
+                <span class="flex items-center gap-1.5">
+                  <i data-lucide="map-pin" class="w-4 h-4 text-blue-400/70"></i> 
+                  <strong class="text-slate-200 font-medium">${p.country || 'País N/A'}</strong>
+                </span>
+                <span class="flex items-center gap-1.5">
+                  <i data-lucide="tag" class="w-4 h-4 text-blue-400/70"></i> 
+                  <strong class="text-slate-200 font-medium">${p.genre || 'General'}</strong>
+                </span>
+                <span class="px-2 py-0.5 rounded-md bg-slate-800 border border-slate-700 text-xs font-mono">
+                  ${bookCount} libro(s) • Fundada en ${p.foundationYear || 'N/A'}
+                </span>
+              </div>
+            </div>
+
+            <!-- Acciones -->
+            <div class="flex items-center gap-3 md:w-auto w-full border-t md:border-t-0 border-[#1a2438] pt-4 md:pt-0 mt-2 md:mt-0 justify-end">
+              <button onclick="viewPublisherDetail('${p.id}')" class="text-sm font-semibold text-blue-400 hover:text-blue-300 flex items-center gap-1 mr-2 transition">
+                Ver Detalle <i data-lucide="chevron-right" class="w-4 h-4"></i>
+              </button>
+              <div class="w-px h-6 bg-[#1a2438] mx-1 hidden md:block"></div>
+              <button onclick="editPublisher('${p.id}')" title="Editar" class="p-2.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 transition"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+              <button onclick="deletePublisher('${p.id}')" title="Eliminar" class="p-2.5 rounded-xl bg-red-950/40 hover:bg-red-900/60 text-red-400 transition"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+            </div>
+
+          </div>
+        `;
+      }).join('');
+      lucide.createIcons();
+    }
+
+    // ==============================================
+    // VISTA DE DETALLE: LIBRO (IMAGEN 2)
+    // ==============================================
+    function viewBookDetail(bookId) {
+      const book = state.books.find(b => String(b.id) === String(bookId));
+      if (!book) return;
+
+      const author = state.authors.find(a => String(a.id) === String(book.authorId));
+      const publisher = state.publishers.find(p => String(p.id) === String(book.publisherId));
+
+      document.getElementById('detail-book-title').innerText = book.title;
+      document.getElementById('detail-book-copyright').innerText = book.copyright || '2012';
+      document.getElementById('detail-book-edition').innerText = book.edition || '9th';
+      document.getElementById('detail-book-language').innerText = book.language || 'ENGLISH';
+
+      // Enlaces relacionados
+      document.getElementById('detail-book-author-name').innerText = author ? author.name : 'No asignado';
+      document.getElementById('detail-book-publisher-name').innerText = publisher ? publisher.name : 'No asignado';
+
+      // Click events para los enlaces relacionados
+      document.getElementById('detail-book-author-card').onclick = () => {
+        if (author) viewAuthorDetail(author.id);
+      };
+      document.getElementById('detail-book-publisher-card').onclick = () => {
+        if (publisher) viewPublisherDetail(publisher.id);
+      };
+
+      // Botones de acción del libro
+      document.getElementById('btn-edit-current-book').onclick = () => editBook(book.id);
+      document.getElementById('btn-delete-current-book').onclick = () => {
+        deleteBook(book.id);
+        navTo('books');
+      };
+
+      navTo('book-detail');
+    }
+
+    // ==============================================
+    // VISTA DE DETALLE: AUTOR (IMAGEN 1)
+    // ==============================================
+    function viewAuthorDetail(authorId) {
+      const author = state.authors.find(a => String(a.id) === String(authorId));
+      if (!author) return;
+
+      document.getElementById('detail-author-name').innerText = author.name;
+      document.getElementById('detail-author-nationality').innerText = author.nationality || 'N/A';
+      document.getElementById('detail-author-birthyear').innerText = author.birthYear || 'N/A';
+      document.getElementById('detail-author-specialization').innerText = author.specialization || 'N/A';
+
+      // Libros publicados por este autor
+      const books = state.books.filter(b => String(b.authorId) === String(author.id));
+      const booksContainer = document.getElementById('detail-author-books-list');
+
+      if (books.length === 0) {
+        booksContainer.innerHTML = `
+          <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-6 text-center text-slate-500 text-sm">
+            Este autor no tiene libros registrados aún.
+          </div>
+        `;
+      } else {
+        booksContainer.innerHTML = books.map(b => {
+          const pub = state.publishers.find(p => String(p.id) === String(b.publisherId));
+          return `
+            <div onclick="viewBookDetail('${b.id}')" class="group bg-[#0c1322] hover:bg-[#111a2e] border border-[#1a2438] hover:border-blue-500/40 rounded-2xl p-4 flex items-center justify-between cursor-pointer transition">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center">
+                  <i data-lucide="book-open" class="w-5 h-5"></i>
+                </div>
+                <div>
+                  <h4 class="text-white font-semibold text-sm group-hover:text-blue-400 transition">${b.title}</h4>
+                  <p class="text-xs text-slate-400">Edición: ${b.edition || 'N/A'} • ${pub ? pub.name : 'Editorial'} (${b.copyright || 'N/A'})</p>
+                </div>
+              </div>
+              <i data-lucide="arrow-right" class="w-4 h-4 text-slate-500 group-hover:text-white group-hover:translate-x-1 transition"></i>
+            </div>
+          `;
+        }).join('');
+      }
+
+      document.getElementById('btn-edit-current-author').onclick = () => editAuthor(author.id);
+      document.getElementById('btn-delete-current-author').onclick = () => {
+        deleteAuthor(author.id);
+        navTo('authors');
+      };
+
+      navTo('author-detail');
+    }
+
+    // ==============================================
+    // VISTA DE DETALLE: EDITORIAL (IMAGEN 3)
+    // ==============================================
+    function viewPublisherDetail(publisherId) {
+      const pub = state.publishers.find(p => String(p.id) === String(publisherId));
+      if (!pub) return;
+
+      document.getElementById('detail-publisher-name').innerText = pub.name;
+      document.getElementById('detail-publisher-country').innerText = pub.country || 'N/A';
+      document.getElementById('detail-publisher-year').innerText = pub.foundationYear || 'N/A';
+      document.getElementById('detail-publisher-genre').innerText = pub.genre || 'N/A';
+
+      // Libros publicados por esta editorial
+      const books = state.books.filter(b => String(b.publisherId) === String(pub.id));
+      const booksContainer = document.getElementById('detail-publisher-books-list');
+
+      if (books.length === 0) {
+        booksContainer.innerHTML = `
+          <div class="bg-[#0c1322] border border-[#1a2438] rounded-2xl p-6 text-center text-slate-500 text-sm">
+            Esta editorial no tiene libros registrados aún.
+          </div>
+        `;
+      } else {
+        booksContainer.innerHTML = books.map(b => {
+          const author = state.authors.find(a => String(a.id) === String(b.authorId));
+          return `
+            <div onclick="viewBookDetail('${b.id}')" class="group bg-[#0c1322] hover:bg-[#111a2e] border border-[#1a2438] hover:border-blue-500/40 rounded-2xl p-4 flex items-center justify-between cursor-pointer transition">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 flex items-center justify-center">
+                  <i data-lucide="book-open" class="w-5 h-5"></i>
+                </div>
+                <div>
+                  <h4 class="text-white font-semibold text-sm group-hover:text-blue-400 transition">${b.title}</h4>
+                  <p class="text-xs text-slate-400">Autor: ${author ? author.name : 'Desconocido'} • Edición: ${b.edition || 'N/A'} (${b.copyright || 'N/A'})</p>
+                </div>
+              </div>
+              <i data-lucide="arrow-right" class="w-4 h-4 text-slate-500 group-hover:text-white group-hover:translate-x-1 transition"></i>
+            </div>
+          `;
+        }).join('');
+      }
+
+      document.getElementById('btn-edit-current-publisher').onclick = () => editPublisher(pub.id);
+      document.getElementById('btn-delete-current-publisher').onclick = () => {
+        deletePublisher(pub.id);
+        navTo('publishers');
+      };
+
+      navTo('publisher-detail');
+    }
+
+    // ==============================================
+    // COLA REDIS EVENT SOURCING
+    // ==============================================
+    async function fetchQueue() {
+      try {
+        const res = await fetch('/.netlify/functions/getQueue');
+        if (!res.ok) throw new Error('Error al consultar Redis');
+        const data = await res.json();
+        state.queue = data.queue || [];
+
+        // Update badge
+        document.getElementById('queue-badge').innerText = data.count || 0;
+        document.getElementById('queue-count-display').innerText = data.count || 0;
+        document.getElementById('queue-connection-details').innerText = `${data.host}:${data.port}`;
+
+        renderQueue(data.queue);
+      } catch (err) {
+        console.error('Error al obtener cola:', err);
+        document.getElementById('redis-status-indicator').className = 'flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-medium';
+        document.getElementById('redis-status-text').innerText = 'Redis Desconectado';
+      }
+    }
+
+    function renderQueue(queue) {
+      const container = document.getElementById('queue-items-container');
+      if (!queue || queue.length === 0) {
+        container.innerHTML = `
+          <div class="py-12 text-center text-slate-500">
+            <i data-lucide="inbox" class="w-10 h-10 mx-auto mb-2 opacity-40"></i>
+            <p>La lista 'bookstore' en Redis está vacía.</p>
+            <p class="text-xs text-slate-600 mt-1">Crea, edita o elimina libros/autores/editoriales para ver los eventos encolados en tiempo real.</p>
+          </div>
+        `;
+        lucide.createIcons();
+        return;
+      }
+
+      container.innerHTML = queue.map((ev, idx) => {
+        let opColor = 'bg-blue-500/10 text-blue-400 border-blue-500/30';
+        if (ev.type === 'INSERT') opColor = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
+        if (ev.type === 'UPDATE') opColor = 'bg-amber-500/10 text-amber-400 border-amber-500/30';
+        if (ev.type === 'DELETE') opColor = 'bg-red-500/10 text-red-400 border-red-500/30';
+
+        return `
+          <div class="bg-[#070b13] border border-[#1a2438] rounded-xl p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+            <div class="flex items-center gap-2.5">
+              <span class="font-mono text-slate-500 font-bold">#${ev.index !== undefined ? ev.index : idx}</span>
+              <span class="px-2 py-0.5 rounded-md border font-bold uppercase text-[11px] ${opColor}">${ev.type || 'EVENT'}</span>
+              <span class="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 font-medium uppercase text-[11px]">${ev.entity || 'DESCONOCIDO'}</span>
+              <span class="text-slate-300 font-semibold">ID: ${ev.id || (ev.data ? ev.data.id : 'N/A')}</span>
+            </div>
+            <div class="flex items-center gap-3 text-slate-400 font-mono text-[11px]">
+              <span>${ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : 'Evento'}</span>
+              <details class="cursor-pointer">
+                <summary class="text-blue-400 hover:text-blue-300 select-none">Ver payload JSON</summary>
+                <pre class="mt-2 p-2 bg-black/60 rounded border border-slate-800 text-[10px] text-slate-300 overflow-x-auto">${JSON.stringify(ev, null, 2)}</pre>
+              </details>
+            </div>
+          </div>
+        `;
+      }).join('');
+      lucide.createIcons();
+    }
+
+    async function clearRedisQueue() {
+      if (!confirm('¿Deseas vaciar la lista "bookstore" en Redis?')) return;
+      try {
+        const res = await fetch('/.netlify/functions/clearQueue', { method: 'POST' });
+        const data = await res.json();
+        showToast(data.message || 'Cola vaciada');
+        fetchQueue();
+      } catch (err) {
+        showToast('Error al vaciar cola: ' + err.message, 'error');
+      }
+    }
+
+    // ==============================================
+    // EJECUCIÓN BATCH DE TAREAS
+    // ==============================================
+    async function processBatchTasks(endpoint) {
+      try {
+        showToast(`Procesando eventos con ${endpoint}...`);
+        const res = await fetch(`/.netlify/functions/${endpoint}`);
+        const data = await res.json();
+        showToast(`✅ ${data.message}`);
+        fetchQueue();
+      } catch (err) {
+        showToast(`Error al ejecutar tareas: ${err.message}`, 'error');
+      }
+    }
+
+    // ==============================================
+    // MODALES & SUBMITS: LIBRO
+    // ==============================================
+    function openBookModal(book = null) {
+      document.getElementById('form-book-id').value = book ? book.id : '';
+      document.getElementById('form-book-title').value = book ? book.title : '';
+      document.getElementById('form-book-copyright').value = book ? (book.copyright || '') : '';
+      document.getElementById('form-book-edition').value = book ? (book.edition || '') : '';
+      document.getElementById('form-book-language').value = book ? (book.language || '') : '';
+      document.getElementById('form-book-author').value = book ? (book.authorId || '') : '';
+      document.getElementById('form-book-publisher').value = book ? (book.publisherId || '') : '';
+
+      document.getElementById('modal-book-title').innerText = book ? 'Editar Libro' : 'Nuevo Libro';
+      document.getElementById('modal-book').classList.remove('hidden');
+    }
+
+    async function handleBookSubmit(e) {
+      e.preventDefault();
+      const id = document.getElementById('form-book-id').value;
+      const data = {
+        title: document.getElementById('form-book-title').value,
+        copyright: document.getElementById('form-book-copyright').value || '2024',
+        edition: document.getElementById('form-book-edition').value || '1st',
+        language: document.getElementById('form-book-language').value || 'SPANISH',
+        authorId: document.getElementById('form-book-author').value,
+        publisherId: document.getElementById('form-book-publisher').value
+      };
+
+      try {
+        if (id) {
+          // UPDATE
+          await fetch('/.netlify/functions/bookUpdate', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, ...data })
+          });
+          const idx = state.books.findIndex(b => String(b.id) === String(id));
+          if (idx !== -1) state.books[idx] = { id, ...data };
+          showToast('Evento de actualización de libro encolado en Redis');
+        } else {
+          // INSERT
+          const newId = (state.books.length + 1).toString();
+          data.id = newId;
+          await fetch('/.netlify/functions/bookInsert', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+          state.books.push(data);
+          showToast('Evento de inserción de libro encolado en Redis');
+        }
+
+        await persistEntities();
+        closeModals();
+        renderAll();
+        fetchQueue();
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    function editBook(id) {
+      const book = state.books.find(b => String(b.id) === String(id));
+      if (book) openBookModal(book);
+    }
+
+    async function deleteBook(id) {
+      if (!confirm('¿Seguro que deseas eliminar este libro?')) return;
+      try {
+        await fetch('/.netlify/functions/bookDelete', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id })
+        });
+        state.books = state.books.filter(b => String(b.id) !== String(id));
+        await persistEntities();
+        renderAll();
+        fetchQueue();
+        showToast('Evento de eliminación de libro encolado en Redis');
+      } catch (err) {
+        showToast('Error al eliminar: ' + err.message, 'error');
+      }
+    }
+
+    // ==============================================
+    // MODALES & SUBMITS: AUTOR
+    // ==============================================
+    function openAuthorModal(author = null) {
+      document.getElementById('form-author-id').value = author ? author.id : '';
+      document.getElementById('form-author-name').value = author ? author.name : '';
+      document.getElementById('form-author-nationality').value = author ? (author.nationality || '') : '';
+      document.getElementById('form-author-birthyear').value = author ? (author.birthYear || '') : '';
+      document.getElementById('form-author-specialization').value = author ? (author.specialization || '') : '';
+
+      document.getElementById('modal-author-title').innerText = author ? 'Editar Autor' : 'Nuevo Autor';
+      document.getElementById('modal-author').classList.remove('hidden');
+    }
+
+    async function handleAuthorSubmit(e) {
+      e.preventDefault();
+      const id = document.getElementById('form-author-id').value;
+      const data = {
+        name: document.getElementById('form-author-name').value,
+        nationality: document.getElementById('form-author-nationality').value,
+        birthYear: document.getElementById('form-author-birthyear').value || 'N/A',
+        specialization: document.getElementById('form-author-specialization').value || 'General'
+      };
+
+      try {
+        if (id) {
+          await fetch('/.netlify/functions/authorUpdate', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, ...data })
+          });
+          const idx = state.authors.findIndex(a => String(a.id) === String(id));
+          if (idx !== -1) state.authors[idx] = { id, ...data };
+          showToast('Evento de actualización de autor encolado en Redis');
+        } else {
+          const newId = (state.authors.length + 1).toString();
+          data.id = newId;
+          await fetch('/.netlify/functions/authorInsert', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+          state.authors.push(data);
+          showToast('Evento de inserción de autor encolado en Redis');
+        }
+
+        await persistEntities();
+        closeModals();
+        renderAll();
+        fetchQueue();
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    function editAuthor(id) {
+      const author = state.authors.find(a => String(a.id) === String(id));
+      if (author) openAuthorModal(author);
+    }
+
+    async function deleteAuthor(id) {
+      if (!confirm('¿Seguro que deseas eliminar este autor?')) return;
+      try {
+        await fetch('/.netlify/functions/authorDelete', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id })
+        });
+        state.authors = state.authors.filter(a => String(a.id) !== String(id));
+        await persistEntities();
+        renderAll();
+        fetchQueue();
+        showToast('Evento de eliminación de autor encolado en Redis');
+      } catch (err) {
+        showToast('Error al eliminar: ' + err.message, 'error');
+      }
+    }
+
+    // ==============================================
+    // MODALES & SUBMITS: EDITORIAL
+    // ==============================================
+    function openPublisherModal(pub = null) {
+      document.getElementById('form-publisher-id').value = pub ? pub.id : '';
+      document.getElementById('form-publisher-name').value = pub ? pub.name : '';
+      document.getElementById('form-publisher-country').value = pub ? (pub.country || '') : '';
+      document.getElementById('form-publisher-year').value = pub ? (pub.foundationYear || '') : '';
+      document.getElementById('form-publisher-genre').value = pub ? (pub.genre || '') : '';
+
+      document.getElementById('modal-publisher-title').innerText = pub ? 'Editar Editorial' : 'Nueva Editorial';
+      document.getElementById('modal-publisher').classList.remove('hidden');
+    }
+
+    async function handlePublisherSubmit(e) {
+      e.preventDefault();
+      const id = document.getElementById('form-publisher-id').value;
+      const data = {
+        name: document.getElementById('form-publisher-name').value,
+        country: document.getElementById('form-publisher-country').value,
+        foundationYear: document.getElementById('form-publisher-year').value || 'N/A',
+        genre: document.getElementById('form-publisher-genre').value || 'General'
+      };
+
+      try {
+        if (id) {
+          await fetch('/.netlify/functions/publisherUpdate', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, ...data })
+          });
+          const idx = state.publishers.findIndex(p => String(p.id) === String(id));
+          if (idx !== -1) state.publishers[idx] = { id, ...data };
+          showToast('Evento de actualización de editorial encolado en Redis');
+        } else {
+          const newId = (state.publishers.length + 1).toString();
+          data.id = newId;
+          await fetch('/.netlify/functions/publisherInsert', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+          state.publishers.push(data);
+          showToast('Evento de inserción de editorial encolado en Redis');
+        }
+
+        await persistEntities();
+        closeModals();
+        renderAll();
+        fetchQueue();
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    function editPublisher(id) {
+      const pub = state.publishers.find(p => String(p.id) === String(id));
+      if (pub) openPublisherModal(pub);
+    }
+
+    async function deletePublisher(id) {
+      if (!confirm('¿Seguro que deseas eliminar esta editorial?')) return;
+      try {
+        await fetch('/.netlify/functions/publisherDelete', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id })
+        });
+        state.publishers = state.publishers.filter(p => String(p.id) !== String(id));
+        await persistEntities();
+        renderAll();
+        fetchQueue();
+        showToast('Evento de eliminación de editorial encolado en Redis');
+      } catch (err) {
+        showToast('Error al eliminar: ' + err.message, 'error');
+      }
+    }
+
+    function closeModals() {
+      document.querySelectorAll('#modal-book, #modal-author, #modal-publisher').forEach(m => m.classList.add('hidden'));
+    }
+
+    // INICIAR
+    window.addEventListener('DOMContentLoaded', () => {
+      loadInitialData();
+    });
+  </script>
+</body>
+</html>
